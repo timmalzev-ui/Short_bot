@@ -339,11 +339,12 @@ def send_periodic_report():
 
 # ================== ЗАПУСК ==================
 if __name__ == "__main__":
-    send_telegram_message("🚀 **PRO-БОТ ЗАПУЩЕН** ✅\nстрогие фильтры + CVD + Fake Breakout")
+    print("🚀 PRO-БОТ СТАРТУЕТ...")
+    print("✅ Bybit скан каждые 10 мин")
+    print("✅ Отчёт каждые 3 часа в логах")
     logger.info("Bot started")
     
-    # ✅ СТАТУС ЧЕРЕЗ 30 МИНУТ
-    schedule.every(30).minutes.do(lambda: send_telegram_message("✅ Бот жив! Сканирую Bybit..."))
+    schedule.every(30).minutes.do(lambda: print("✅ Бот жив! Скан продолжается..."))
     
     reset_stats()
     schedule.every(10).minutes.do(scan_market)
@@ -352,3 +353,4 @@ if __name__ == "__main__":
     while True:
         schedule.run_pending()
         time.sleep(1)
+

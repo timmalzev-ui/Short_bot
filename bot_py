@@ -9,8 +9,8 @@ from typing import List, Tuple, Dict, Optional
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-send_telegram_message("🚀 PRO‑бот запущен: строгие фильтры + CVD + Fake Breakout + периодические отчёты")
 logger.info("Bot started")
+send_telegram_message("🚀 PRO‑бот запущен: строгие фильтры + CVD + Fake Breakout + периодические отчёты")
 
 # ================== ЛОГИРОВАНИЕ ==================
 logging.basicConfig(

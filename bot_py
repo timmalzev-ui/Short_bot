@@ -278,6 +278,7 @@ def reset_stats():
 def scan_market():
     global stats
     symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
+MAX_SYMBOLS = 100
     if not symbols: return
 
     with stats_lock:

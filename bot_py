@@ -17,8 +17,8 @@ logging.basicConfig(
 logger = logging.getLogger("pro_bot")
 
 # ================== НАСТРОЙКИ ==================
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
+BOT_TOKEN = "8749616718:AAFaXDA9zffl4Cjf2Gh64hU7TbAZm8foPGM"
+CHAT_ID = "-4778661545"
 BASE_URL = "https://api.bybit.com"
 
 # Фильтры стратегии (оставляем «строгими»)

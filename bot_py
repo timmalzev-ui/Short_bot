@@ -17,7 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger("pro_bot")
 
 # ================== НАСТРОЙКИ ==================
-DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1484643724175740928/6DLUu-2ilnSAP33eyQiStahkb7RcgD4PHEKG-3DFCtD-6wCa7umrTV0sAx1e06QLoSzS"
+DISCORD_WEBHOOK = "https://discord.com/oauth2/authorize?client_id=1484646044989132911&permissions=84224&response_type=code&redirect_uri=http%3A%2F%2Flocalhost&integration_type=0&scope=bot"
 
 BASE_URL = "https://api.bybit.com"
 

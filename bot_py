@@ -9,9 +9,6 @@ from typing import List, Tuple, Dict, Optional
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-logger.info("Bot started")
-send_telegram_message("🚀 PRO‑бот запущен: строгие фильтры + CVD + Fake Breakout + периодические отчёты")
-
 # ================== ЛОГИРОВАНИЕ ==================
 logging.basicConfig(
     level=logging.INFO,
@@ -20,11 +17,12 @@ logging.basicConfig(
 logger = logging.getLogger("pro_bot")
 
 # ================== НАСТРОЙКИ ==================
-BOT_TOKEN = "8749616718:AAFaXDA9zffl4Cjf2Gh64hU7TbAZm8foPGM"
-CHAT_ID = "-4778661545"
+BOT_TOKEN = "8749616718:AAFaXDA9zffl4Cjf2Gh64hU7TbAZm8foPGM"   
+CHAT_ID = "-4778661545"         
+
 BASE_URL = "https://api.bybit.com"
 
-# Фильтры стратегии (оставляем «строгими»)
+# Фильтры стратегии (строгие)
 MIN_PUMP_24H = 30.0
 MIN_TURNOVER_24H = 15_000_000
 MIN_FUNDING = 0.08
@@ -42,7 +40,7 @@ TP2_RR = 6.0
 REPORT_INTERVAL_HOURS = 3
 MAX_NEAR_SIGNALS_IN_REPORT = 5
 
-# ================== TELEGRAM ==================
+# ================== TELEGRAM (УЛУЧШЕННАЯ ВЕРСИЯ) ==================
 def send_telegram_message(text: str) -> None:
     """Отправка с retry и увеличенным timeout"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -50,40 +48,35 @@ def send_telegram_message(text: str) -> None:
     
     for attempt in range(3):
         try:
-            resp = requests.post(url, json=payload, timeout=20)  # 20 сек вместо 5
+            resp = requests.post(url, json=payload, timeout=20)
             if resp.status_code == 200:
-                logger.info("Telegram OK: %s", text[:50])
+                logger.info("✅ Telegram OK: %s", text[:50])
                 return
             logger.warning("Telegram HTTP %d: %s", resp.status_code, resp.text)
         except Exception as e:
             logger.warning("Telegram attempt %d error: %s", attempt+1, str(e))
         
         if attempt < 2:
-            time.sleep(2 ** attempt)  # 1 сек, 2 сек, 4 сек
+            time.sleep(2 ** attempt)
     
-    logger.error("Telegram полностью упал после 3 попыток")
+    logger.error("❌ Telegram полностью упал после 3 попыток")
 
 # ================== API ==================
 def get_all_linear_symbols() -> List[str]:
     url = f"{BASE_URL}/v5/market/instruments-info?category=linear"
     try:
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        return [
-            i["symbol"]
-            for i in data["result"]["list"]
-            if i.get("quoteCoin") == "USDT"
-        ]
+        return [i["symbol"] for i in data["result"]["list"] if i.get("quoteCoin") == "USDT"]
     except Exception as e:
         logger.exception("Error in get_all_linear_symbols: %s", e)
         return []
 
-
 def get_ticker(symbol: str) -> Optional[Dict]:
     url = f"{BASE_URL}/v5/market/tickers?category=linear&symbol={symbol}"
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         t = resp.json()["result"]["list"][0]
         return {
@@ -95,31 +88,21 @@ def get_ticker(symbol: str) -> Optional[Dict]:
         logger.exception("Error in get_ticker(%s): %s", symbol, e)
         return None
 
-
 def get_funding_rate(symbol: str) -> float:
-    url = (
-        f"{BASE_URL}/v5/market/premium-index-kline"
-        f"?category=linear&symbol={symbol}&interval=60&limit=24"
-    )
+    url = f"{BASE_URL}/v5/market/premium-index-kline?category=linear&symbol={symbol}&interval=60&limit=24"
     try:
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         rows = resp.json()["result"]["list"]
-        last = rows[0]
-        return float(last[1]) * 100.0
+        return float(rows[0][1]) * 100.0
     except Exception as e:
         logger.exception("Error in get_funding_rate(%s): %s", symbol, e)
         return 0.0
 
-
 def get_long_short_ratio(symbol: str) -> float:
-    url = (
-        f"{BASE_URL}/v5/market/account-ratio"
-        "?category=linear"
-        f"&symbol={symbol}&interval=5min&limit=1"
-    )
+    url = f"{BASE_URL}/v5/market/account-ratio?category=linear&symbol={symbol}&interval=5min&limit=1"
     try:
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         row = resp.json()["result"]["list"][0]
         return float(row["longAccountRatio"]) * 100.0
@@ -127,81 +110,46 @@ def get_long_short_ratio(symbol: str) -> float:
         logger.exception("Error in get_long_short_ratio(%s): %s", symbol, e)
         return 50.0
 
-
 def get_recent_klines(symbol: str, interval: str = "15", limit: int = 50) -> List[List[str]]:
-    url = (
-        f"{BASE_URL}/v5/market/kline"
-        f"?category=linear&symbol={symbol}&interval={interval}&limit={limit}"
-    )
+    url = f"{BASE_URL}/v5/market/kline?category=linear&symbol={symbol}&interval={interval}&limit={limit}"
     try:
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         return resp.json()["result"]["list"]
     except Exception as e:
         logger.exception("Error in get_recent_klines(%s): %s", symbol, e)
         return []
 
-
-# ================== ЛОГИКА ПАТТЕРНОВ ==================
+# ================== ПАТТЕРНЫ ==================
 def is_exhaustion_pattern(klines: List[List[str]]) -> bool:
-    if len(klines) < 30:
-        return False
-
+    if len(klines) < 30: return False
     recent = klines[:30]
     bodies = []
     green_count = 0
-
     for k in recent:
-        o = float(k[1])
-        c = float(k[4])
-        h = float(k[2])
-        l = float(k[3])
+        o, c = float(k[1]), float(k[4])
         body = abs(c - o)
         bodies.append(body)
-        if c > o:
-            green_count += 1
-
-    if green_count < 18:
-        return False
-
-    avg_body = sum(bodies[5:]) / max(len(bodies[5:]), 1)
-    last_body = bodies[0]
-
-    return last_body >= avg_body * 2.0
-
+        if c > o: green_count += 1
+    if green_count < 18: return False
+    avg_body = sum(bodies[5:]) / max(1, len(bodies[5:]))
+    return bodies[0] >= avg_body * 2.0
 
 def is_volume_climax(klines: List[List[str]]) -> bool:
-    if len(klines) < 35:
-        return False
-
+    if len(klines) < 35: return False
     volumes = [float(k[5]) for k in klines[:35]]
     last_vol = volumes[0]
-    avg_prev_vol = sum(volumes[5:]) / max(len(volumes[5:]), 1)
-
-    if avg_prev_vol <= 0:
-        return False
-
-    return last_vol >= avg_prev_vol * 3.0
-
+    avg_prev_vol = sum(volumes[5:]) / max(1, len(volumes[5:]))
+    return last_vol >= avg_prev_vol * 3.0 and avg_prev_vol > 0
 
 def is_fake_breakout(klines: List[List[str]]) -> bool:
-    if len(klines) < 40:
-        return False
-
+    if len(klines) < 40: return False
     last = klines[0]
     prev_window = klines[1:31]
-
-    high_last = float(last[2])
-    close_last = float(last[4])
-
+    high_last, close_last = float(last[2]), float(last[4])
     prev_high = max(float(k[2]) for k in prev_window)
     prev_low = min(float(k[3]) for k in prev_window)
-
-    if high_last > prev_high and prev_low < close_last < prev_high:
-        return True
-
-    return False
-
+    return high_last > prev_high and prev_low < close_last < prev_high
 
 # ================== CVD MANAGER ==================
 class CVDManager:
@@ -218,187 +166,95 @@ class CVDManager:
     def _on_message(self, ws, message: str):
         try:
             data = json.loads(message)
-            topic = data.get("topic", "")
-            if not topic.startswith("publicTrade."):
-                return
-            symbol = topic.split(".")[1]
-
+            if not data.get("topic", "").startswith("publicTrade."): return
+            symbol = data["topic"].split(".")[1]
             trades = data.get("data", [])
             with self._lock:
                 for t in trades:
                     price = float(t["p"])
-                    volume = float(t["v"])
-                    side = t["S"]
                     self.prices.setdefault(symbol, []).append(price)
                     if len(self.prices[symbol]) > 300:
                         self.prices[symbol] = self.prices[symbol][-300:]
-
-                    delta = volume if side == "Buy" else -volume
+                    delta = float(t["v"]) if t["S"] == "Buy" else -float(t["v"])
                     self.cvd[symbol] = self.cvd.get(symbol, 0.0) + delta
-        except Exception as e:
-            logger.exception("Error in CVDManager _on_message: %s", e)
+        except: pass
 
     def _on_open(self, ws):
-        logger.info("CVD WebSocket opened")
+        logger.info("✅ CVD WebSocket opened")
         self._resubscribe(ws)
 
-    def _on_error(self, ws, error):
-        logger.error("CVD WebSocket error: %s", error)
-
-    def _on_close(self, ws, code, msg):
-        logger.warning("CVD WebSocket closed: %s %s", code, msg)
+    def _on_error(self, ws, error): logger.error("CVD WS error: %s", error)
+    def _on_close(self, ws, code, msg): logger.warning("CVD WS closed")
 
     def _run(self):
-        self.ws = websocket.WebSocketApp(
-            self.url,
-            on_message=self._on_message,
-            on_open=self._on_open,
-            on_error=self._on_error,
-            on_close=self._on_close,
-        )
+        self.ws = websocket.WebSocketApp(self.url, 
+            on_message=self._on_message, on_open=self._on_open,
+            on_error=self._on_error, on_close=self._on_close)
         self.ws.run_forever()
 
     def start(self):
-        if self._running:
-            return
+        if self._running: return
         self._running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
     def subscribe_symbol(self, symbol: str):
         with self._lock:
-            if symbol in self.subscribed:
-                return
+            if symbol in self.subscribed: return
             self.subscribed.add(symbol)
         if self.ws:
-            sub_msg = {"op": "subscribe", "args": [f"publicTrade.{symbol}"]}
-            try:
-                self.ws.send(json.dumps(sub_msg))
-                logger.info("Subscribed CVD to %s", symbol)
-            except Exception as e:
-                logger.exception("Error subscribing CVD for %s: %s", symbol, e)
+            self.ws.send(json.dumps({"op": "subscribe", "args": [f"publicTrade.{symbol}"]}))
 
     def _resubscribe(self, ws):
         with self._lock:
-            if not self.subscribed:
-                return
-            args = [f"publicTrade.{s}" for s in self.subscribed]
-        msg = {"op": "subscribe", "args": args}
-        try:
-            ws.send(json.dumps(msg))
-            logger.info("Resubscribed CVD to %d symbols", len(args))
-        except Exception as e:
-            logger.exception("Error in CVD _resubscribe: %s", e)
+            if self.subscribed:
+                ws.send(json.dumps({"op": "subscribe", "args": [f"publicTrade.{s}" for s in self.subscribed]}))
 
     def get_snapshot(self, symbol: str) -> Tuple[float, List[float]]:
         with self._lock:
-            cvd_val = self.cvd.get(symbol, 0.0)
-            prices = list(self.prices.get(symbol, []))
-        return cvd_val, prices
+            return self.cvd.get(symbol, 0.0), list(self.prices.get(symbol, []))
 
-
-# ================== ДИВЕРГЕНЦИЯ ==================
-def find_swing_highs(prices: List[float], lookback: int = 2) -> List[Tuple[int, float]]:
-    swing_highs = []
-    for i in range(lookback, len(prices) - lookback):
-        window = prices[i - lookback : i + lookback + 1]
-        if prices[i] == max(window):
-            swing_highs.append((i, prices[i]))
-    return swing_highs
-
-
+# ================== ДИВЕРГЕНЦИЯ + СКОР ==================
 def check_bearish_divergence(prices: List[float], cvd_value: float) -> bool:
-    if len(prices) < 60:
-        return False
-
-    swing_highs = find_swing_highs(prices, lookback=2)
-    if len(swing_highs) < 2:
-        return False
-
+    if len(prices) < 60: return False
+    swing_highs = []
+    for i in range(2, len(prices)-2):
+        if prices[i] == max(prices[i-2:i+3]): swing_highs.append((i, prices[i]))
+    if len(swing_highs) < 2: return False
     (_, price_prev), (_, price_last) = swing_highs[-2:]
+    return price_last > price_prev and cvd_value <= 0
 
-    if price_last <= price_prev:
-        return False
-
-    # Условие можно ослаблять, если будет слишком редко
-    if cvd_value <= 0:
-        return True
-
-    return False
-
-
-# ================== СКОРИНГ ==================
-def calc_score(
-    ticker: Dict,
-    funding: float,
-    longs: float,
-    cvd_val: float,
-    fake_breakout_flag: bool,
-) -> int:
+def calc_score(ticker: Dict, funding: float, longs: float, cvd_val: float, fake_breakout: bool) -> int:
     score = 0
-    if ticker["price24hPcnt"] > 40:
-        score += 1
-    if ticker["turnover24h"] > 25_000_000:
-        score += 1
-    if funding > 0.15:
-        score += 1
-    if longs > 78:
-        score += 1
-    if cvd_val < 0:
-        score += 2
-    if fake_breakout_flag:
-        score += 2
+    if ticker["price24hPcnt"] > 40: score += 1
+    if ticker["turnover24h"] > 25_000_000: score += 1
+    if funding > 0.15: score += 1
+    if longs > 78: score += 1
+    if cvd_val < 0: score += 2
+    if fake_breakout: score += 2
     return score
 
-
-# ================== СТАТИСТИКА ДЛЯ ОТЧЁТОВ ==================
+# ================== СТАТИСТИКА ==================
 cvd_manager = CVDManager()
 cvd_manager.start()
 
-# Накапливаем статистику за отчётный период
 stats_lock = threading.Lock()
-stats = {
-    "scan_count": 0,
-    "symbols_total": 0,
-    "after_pump": 0,
-    "after_sentiment": 0,
-    "after_patterns": 0,
-    "after_cvd": 0,
-    "signals": 0,
-}
-
-near_signals: List[Dict] = []
+stats = {"scan_count": 0, "symbols_total": 0, "after_pump": 0, "after_sentiment": 0, "after_patterns": 0, "after_cvd": 0, "signals": 0}
 near_signals_lock = threading.Lock()
+near_signals: List[Dict] = []
 last_report_time = datetime.utcnow()
-
 
 def reset_stats():
     global stats, near_signals, last_report_time
-    with stats_lock:
-        stats = {
-            "scan_count": 0,
-            "symbols_total": 0,
-            "after_pump": 0,
-            "after_sentiment": 0,
-            "after_patterns": 0,
-            "after_cvd": 0,
-            "signals": 0,
-        }
-    with near_signals_lock:
-        near_signals = []
-    last_report_time = datetime.utcnow()
-
+    with stats_lock: stats = {"scan_count": 0, "symbols_total": 0, "after_pump": 0, "after_sentiment": 0, "after_patterns": 0, "after_cvd": 0, "signals": 0}
+    with near_signals_lock: near_signals = []
+    global last_report_time; last_report_time = datetime.utcnow()
 
 # ================== SCAN ==================
 def scan_market():
     global stats
-    logger.info("Starting market scan")
-    symbols = get_all_linear_symbols()
-    if not symbols:
-        logger.warning("No symbols returned from instruments-info")
-        return
-
-    symbols = symbols[:MAX_SYMBOLS]
+    symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
+    if not symbols: return
 
     with stats_lock:
         stats["scan_count"] += 1
@@ -406,200 +262,93 @@ def scan_market():
 
     for sym in symbols:
         ticker = get_ticker(sym)
-        if not ticker:
+        if not ticker or ticker["price24hPcnt"] < MIN_PUMP_24H or ticker["turnover24h"] < MIN_TURNOVER_24H:
             continue
+        with stats_lock: stats["after_pump"] += 1
 
-        if (
-            ticker["price24hPcnt"] < MIN_PUMP_24H
-            or ticker["turnover24h"] < MIN_TURNOVER_24H
-        ):
-            continue
-
-        with stats_lock:
-            stats["after_pump"] += 1
-
-        funding = get_funding_rate(sym)
-        if funding < MIN_FUNDING:
-            continue
-
-        longs = get_long_short_ratio(sym)
-        if longs < MIN_LONGS:
-            continue
-
-        with stats_lock:
-            stats["after_sentiment"] += 1
+        funding, longs = get_funding_rate(sym), get_long_short_ratio(sym)
+        if funding < MIN_FUNDING or longs < MIN_LONGS: continue
+        with stats_lock: stats["after_sentiment"] += 1
 
         klines = get_recent_klines(sym)
-        if not klines:
-            continue
+        if not klines: continue
 
-        exhaustion = is_exhaustion_pattern(klines)
-        if not exhaustion:
-            continue
-
-        vol_climax = is_volume_climax(klines)
-        if not vol_climax:
-            continue
-
-        fake_break = is_fake_breakout(klines)
-        if not fake_break:
-            continue
-
-        with stats_lock:
-            stats["after_patterns"] += 1
+        exhaustion, vol_climax, fake_break = is_exhaustion_pattern(klines), is_volume_climax(klines), is_fake_breakout(klines)
+        if not (exhaustion and vol_climax and fake_break): continue
+        with stats_lock: stats["after_patterns"] += 1
 
         cvd_manager.subscribe_symbol(sym)
         cvd_val, prices = cvd_manager.get_snapshot(sym)
-        if not prices:
-            continue
+        if not prices: continue
 
         divergence = check_bearish_divergence(prices, cvd_val)
         if not divergence:
-            # Кандидат «почти»: дошёл до CVD, но дивергенции нет
-            candidate = {
-                "symbol": sym,
-                "ticker": ticker,
-                "funding": funding,
-                "longs": longs,
-                "cvd": cvd_val,
-                "reason": "Нет CVD‑дивергенции",
-                "score": 0,
-            }
             with near_signals_lock:
-                near_signals.append(candidate)
+                near_signals.append({"symbol": sym, "ticker": ticker, "funding": funding, "longs": longs, "cvd": cvd_val, "reason": "Нет CVD-дивергенции", "score": 0})
             continue
-
-        with stats_lock:
-            stats["after_cvd"] += 1
+        with stats_lock: stats["after_cvd"] += 1
 
         score = calc_score(ticker, funding, longs, cvd_val, fake_break)
-
-        # «Почти сигнал» по score
         if score < 5:
-            candidate = {
-                "symbol": sym,
-                "ticker": ticker,
-                "funding": funding,
-                "longs": longs,
-                "cvd": cvd_val,
-                "reason": f"Score {score}/8 ниже порога 5",
-                "score": score,
-            }
             with near_signals_lock:
-                near_signals.append(candidate)
+                near_signals.append({"symbol": sym, "ticker": ticker, "funding": funding, "longs": longs, "cvd": cvd_val, "reason": f"Score {score}/8", "score": score})
             continue
 
-        # Реальный сигнал
-        with stats_lock:
-            stats["signals"] += 1
-
+        # 🔥 РЕАЛЬНЫЙ СИГНАЛ
+        with stats_lock: stats["signals"] += 1
         price = ticker["lastPrice"]
+        risk_amount = ACCOUNT_EQUITY * (RISK_PER_TRADE_PCT / 100)
+        stop_distance = price * (STOP_PCT / 100)
+        position_size = risk_amount / stop_distance if stop_distance > 0 else 0
+        tp1_price = price * (1 - (STOP_PCT / 100) * TP1_RR)
+        tp2_price = price * (1 - (STOP_PCT / 100) * TP2_RR)
 
-        risk_amount = ACCOUNT_EQUITY * (RISK_PER_TRADE_PCT / 100.0)
-        stop_distance = price * (STOP_PCT / 100.0)
-        if stop_distance <= 0:
-            continue
-        position_size = risk_amount / stop_distance
-        tp1_price = price * (1 - (STOP_PCT / 100.0) * TP1_RR)
-        tp2_price = price * (1 - (STOP_PCT / 100.0) * TP2_RR)
-
-        why_lines = [
-            "• Сильный памп + высокая ликвидность",
-            "• Высокий funding и перекос в лонги",
-            "• Exhaustion‑свеча + volume climax",
-            "• Ложный пробой локального максимума",
-            "• Медвежья CVD‑дивергенция",
-        ]
-        why_text = "\n".join(why_lines)
-
-        msg = (
-            f"🔥 **SHORT — {sym}** (Score: {score}/8)\n\n"
-            f"📈 Памп 24ч: +{ticker['price24hPcnt']:.1f}%\n"
-            f"💰 Цена: {price:.5f}\n"
-            f"💸 Funding: {funding:.3f}%\n"
-            f"👥 Лонги (аккаунты): {longs:.0f}%\n\n"
-            f"🧠 *Почему вход:*\n{why_text}\n\n"
-            f"🎯 *План сделки:*\n"
-            f"Вход: market / откат от зоны ложного пробоя\n"
-            f"Стоп: +{STOP_PCT:.1f}% (≈ {stop_distance:.4f}) над локальным хайем\n"
-            f"TP1 (1:{TP1_RR:.0f}): {tp1_price:.5f}\n"
-            f"TP2 (1:{TP2_RR:.0f}): {tp2_price:.5f}\n\n"
-            f"💼 Риск: {RISK_PER_TRADE_PCT:.1f}% от депозита (~{risk_amount:.2f} USD)\n"
-            f"Размер позиции: ~{position_size:.3f} контрактов\n\n"
-            f"https://www.bybit.com/trade/usdt/{sym}"
-        )
-
+        why_text = "• Сильный памп + ликвидность\n• Высокий funding + лонги\n• Exhaustion + volume climax\n• Fake breakout\n• CVD дивергенция"
+        msg = (f"🔥 **SHORT {sym}** (Score: {score}/8)\n\n"
+               f"📈 +{ticker['price24hPcnt']:.1f}% | {price:.5f}\n"
+               f"💸 Funding: {funding:.3f}% | 👥 Лонги: {longs:.0f}%\n\n"
+               f"🧠 *Почему:* {why_text}\n\n"
+               f"🎯 Стоп: +{STOP_PCT}% | TP1: 1:{TP1_RR} | TP2: 1:{TP2_RR}\n"
+               f"💼 Риск: {risk_amount:.0f}$ | Размер: {position_size:.0f}\n"
+               f"https://www.bybit.com/trade/usdt/{sym}")
         send_telegram_message(msg)
-        logger.info("Signal sent for %s with score %d", sym, score)
-        time.sleep(2)
 
-
-# ================== ОТЧЁТ РАЗ В N ЧАСОВ ==================
 def send_periodic_report():
     global last_report_time
-    now = datetime.utcnow()
-    if now - last_report_time < timedelta(hours=REPORT_INTERVAL_HOURS):
-        return
-
-    with stats_lock:
-        s = stats.copy()
+    if datetime.utcnow() - last_report_time < timedelta(hours=REPORT_INTERVAL_HOURS): return
+    
+    with stats_lock: s = stats.copy()
     with near_signals_lock:
-        # Берём последних/лучших MAX_NEAR_SIGNALS_IN_REPORT
-        # сортировка по score (если есть)
-        sorted_near = sorted(
-            near_signals,
-            key=lambda x: x.get("score", 0),
-            reverse=True,
-        )[:MAX_NEAR_SIGNALS_IN_REPORT]
-
-    lines = []
-    lines.append("📊 *Промежуточный отчёт бота*")
-    lines.append(f"Период: последние ~{REPORT_INTERVAL_HOURS} ч.")
-    lines.append("")
-    lines.append(f"Сканирований: {s['scan_count']}")
-    lines.append(f"Всего символов просмотрено: {s['symbols_total']}")
-    lines.append(f"После фильтра пампа/ликвидности: {s['after_pump']}")
-    lines.append(f"После сантимента (funding+longs): {s['after_sentiment']}")
-    lines.append(f"После паттернов (exhaustion+climax+fake): {s['after_patterns']}")
-    lines.append(f"После CVD‑дивергенции: {s['after_cvd']}")
-    lines.append(f"Реальных сигналов за период: {s['signals']}")
-    lines.append("")
-
+        sorted_near = sorted(near_signals, key=lambda x: x.get("score", 0), reverse=True)[:MAX_NEAR_SIGNALS_IN_REPORT]
+    
+    lines = [f"📊 *ОТЧЁТ* ({datetime.now().strftime('%H:%M')})",
+             f"Сканирований: {s['scan_count']}",
+             f"Монет: {s['symbols_total']} | Памп: {s['after_pump']}",
+             f"Сентимент: {s['after_sentiment']} | Паттерны: {s['after_patterns']}",
+             f"CVD: {s['after_cvd']} | Сигналов: {s['signals']}", ""]
+    
     if sorted_near:
-        lines.append("⚠️ *Почти сигналы (нужен ручной взгляд):*")
+        lines.append("⚠️ *Почти сигналы:*")
         for c in sorted_near:
-            t = c["ticker"]
-            symbol = c["symbol"]
-            funding = c["funding"]
-            longs = c["longs"]
-            reason = c.get("reason", "—")
-            score = c.get("score", 0)
-            line = (
-                f"- {symbol}: памп {t['price24hPcnt']:.1f}%, "
-                f"оборот {t['turnover24h']/1_000_000:.1f}M, "
-                f"funding {funding:.3f}%, longs {longs:.0f}%, "
-                f"score {score}/8 — {reason}"
-            )
-            lines.append(line)
+            lines.append(f"{c['symbol']}: {c['ticker']['price24hPcnt']:.1f}% | score {c['score']} — {c['reason']}")
     else:
-        lines.append("Почти сигналов за период не было (рынок не даёт сетапы под стратегию).")
-
-    msg = "\n".join(lines)
-    send_telegram_message(msg)
-
-    # Сброс статистики и «почти сигналов» на новый период
+        lines.append("ℹ️ Почти сигналов нет")
+    
+    send_telegram_message("\n".join(lines))
     reset_stats()
 
-
 # ================== ЗАПУСК ==================
-send_telegram_message("🚀 PRO‑бот запущен: строгие фильтры + CVD + Fake Breakout + периодические отчёты")
-logger.info("Bot started")
-
-reset_stats()
-
-schedule.every(10).minutes.do(scan_market)
-schedule.every(5).minutes.do(send_periodic_report)
-
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+if __name__ == "__main__":
+    send_telegram_message("🚀 **PRO-БОТ ЗАПУЩЕН** ✅\nстрогие фильтры + CVD + Fake Breakout")
+    logger.info("Bot started")
+    
+    # ✅ СТАТУС ЧЕРЕЗ 30 МИНУТ
+    schedule.every(30).minutes.do(lambda: send_telegram_message("✅ Бот жив! Сканирую Bybit..."))
+    
+    reset_stats()
+    schedule.every(10).minutes.do(scan_market)
+    schedule.every(5).minutes.do(send_periodic_report)
+    
+    while True:
+        schedule.run_pending()
+        time.sleep(1)

@@ -9,6 +9,34 @@ from typing import List, Tuple, Dict, Optional
 from collections import defaultdict
 from datetime import datetime, timedelta
 
+# ================== ДИАГНОСТИКА Bothost ==================
+print("🔍 ДИАГНОСТИКА Bothost...")
+import socket
+
+# Тест 1: интернет вообще
+try:
+    socket.create_connection(("8.8.8.8", 53), timeout=5)
+    print("✅ 1. Интернет DNS OK")
+except:
+    print("❌ 1. DNS FAIL")
+
+# Тест 2: HTTPS к Bybit  
+try:
+    r = requests.get("https://api.bybit.com/v5/market/tickers?category=linear", timeout=10)
+    print(f"✅ 2. Bybit API: {r.status_code}")
+except Exception as e:
+    print(f"❌ 2. Bybit: {e}")
+
+# Тест 3: HTTPS к Telegram  
+try:
+    r = requests.get("https://api.telegram.org/bots/BOT_TOKEN/getMe", timeout=20)
+    print(f"✅ 3. Telegram API: {r.status_code}")
+except Exception as e:
+    print(f"❌ 3. Telegram: {e}")
+
+print("🚀 Диагностика завершена")
+
+
 # ================== ЛОГИРОВАНИЕ ==================
 logging.basicConfig(
     level=logging.INFO,

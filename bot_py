@@ -22,12 +22,12 @@ CHAT_ID = "-4778661545"
 
 BASE_URL = "https://api.bybit.com"
 
-# Фильтры стратегии (строгие)
-MIN_PUMP_24H = 30.0
-MIN_TURNOVER_24H = 15_000_000
-MIN_FUNDING = 0.08
-MIN_LONGS = 70.0
-MAX_SYMBOLS = 100
+# Фильтры стратегии (смягчённые для 1.5–4 сигнала в неделю)
+MIN_PUMP_24H = 28.0          # было 30.0
+MIN_TURNOVER_24H = 12_000_000  # было 15M → чуть ниже порог
+MIN_FUNDING = 0.065          # было 0.08 → основной рост частоты здесь
+MIN_LONGS = 68.5             # было 70.0
+MIN_SCORE_FOR_SIGNAL = 5.0   # было жёстко >=5, теперь можно 4.8–5.0
 
 # Риск‑менеджмент
 ACCOUNT_EQUITY = 10_000
@@ -140,7 +140,8 @@ def is_volume_climax(klines: List[List[str]]) -> bool:
     volumes = [float(k[5]) for k in klines[:35]]
     last_vol = volumes[0]
     avg_prev_vol = sum(volumes[5:]) / max(1, len(volumes[5:]))
-    return last_vol >= avg_prev_vol * 3.0 and avg_prev_vol > 0
+    # Смягчаем с ×3.0 → ×2.4
+    return last_vol >= avg_prev_vol * 2.4 and avg_prev_vol > 0
 
 def is_fake_breakout(klines: List[List[str]]) -> bool:
     if len(klines) < 40: return False
@@ -224,12 +225,14 @@ def check_bearish_divergence(prices: List[float], cvd_value: float) -> bool:
     (_, price_prev), (_, price_last) = swing_highs[-2:]
     return price_last > price_prev and cvd_value <= 0
 
-def calc_score(ticker: Dict, funding: float, longs: float, cvd_val: float, fake_breakout: bool) -> int:
-    score = 0
-    if ticker["price24hPcnt"] > 40: score += 1
-    if ticker["turnover24h"] > 25_000_000: score += 1
-    if funding > 0.15: score += 1
-    if longs > 78: score += 1
+def calc_score(ticker: Dict, funding: float, longs: float, cvd_val: float, fake_breakout: bool) -> float:
+    score = 0.0
+    if ticker["price24hPcnt"] > 35: score += 1      # смягчили с 40
+    if ticker["turnover24h"] > 18_000_000: score += 1
+    if funding > 0.12: score += 1.2
+    if funding > 0.08: score += 0.8                # градация вместо жёсткого порога
+    if longs > 75: score += 1
+    if longs > 70: score += 0.7
     if cvd_val < 0: score += 2
     if fake_breakout: score += 2
     return score
@@ -288,11 +291,19 @@ def scan_market():
             continue
         with stats_lock: stats["after_cvd"] += 1
 
+
         score = calc_score(ticker, funding, longs, cvd_val, fake_break)
-        if score < 5:
+        
+        if score < 4.8:  
             with near_signals_lock:
-                near_signals.append({"symbol": sym, "ticker": ticker, "funding": funding, "longs": longs, "cvd": cvd_val, "reason": f"Score {score}/8", "score": score})
+                near_signals.append({"symbol": sym, "ticker": ticker, "funding": funding, 
+                                     "longs": longs, "cvd": cvd_val, "reason": f"Score {score:.1f}/max", 
+                                     "score": score})
             continue
+
+        # 🔥 РЕАЛЬНЫЙ СИГНАЛ
+        with stats_lock: stats["signals"] += 1
+        # ... дальше отправка сообщения без изменений
 
         # 🔥 РЕАЛЬНЫЙ СИГНАЛ
         with stats_lock: stats["signals"] += 1

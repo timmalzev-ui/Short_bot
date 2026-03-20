@@ -17,7 +17,8 @@ logging.basicConfig(
 logger = logging.getLogger("pro_bot")
 
 # ================== НАСТРОЙКИ ==================
-DISCORD_WEBHOOK = "https://discord.com/oauth2/authorize?client_id=1484646044989132911&permissions=84224&response_type=code&redirect_uri=http%3A%2F%2Flocalhost&integration_type=0&scope=bot"
+BOT_TOKEN = "8749616718:AAFaXDA9zffl4Cjf2Gh64hU7TbAZm8foPGM"  
+CHAT_ID = "-4778661545"        
 
 BASE_URL = "https://api.bybit.com"
 
@@ -338,12 +339,11 @@ def send_periodic_report():
 
 # ================== ЗАПУСК ==================
 if __name__ == "__main__":
-    print("🚀 PRO-БОТ СТАРТУЕТ...")
-    print("✅ Bybit скан каждые 10 мин")
-    print("✅ Отчёт каждые 3 часа в логах")
+    send_telegram_message("🚀 **PRO-БОТ ЗАПУЩЕН** ✅\nстрогие фильтры + CVD + Fake Breakout")
     logger.info("Bot started")
     
-    schedule.every(30).minutes.do(lambda: print("✅ Бот жив! Скан продолжается..."))
+    # ✅ СТАТУС ЧЕРЕЗ 30 МИНУТ
+    schedule.every(30).minutes.do(lambda: send_telegram_message("✅ Бот жив! Сканирую Bybit..."))
     
     reset_stats()
     schedule.every(10).minutes.do(scan_market)
@@ -352,4 +352,3 @@ if __name__ == "__main__":
     while True:
         schedule.run_pending()
         time.sleep(1)
-

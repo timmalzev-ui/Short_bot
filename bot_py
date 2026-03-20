@@ -17,19 +17,18 @@ logging.basicConfig(
 logger = logging.getLogger("pro_bot")
 
 # ================== НАСТРОЙКИ ==================
-BOT_TOKEN = "8749616718:AAFaXDA9zffl4Cjf2Gh64hU7TbAZm8foPGM"  
-CHAT_ID = "-4778661545"        
-
+BOT_TOKEN = "8749616718:AAFaXDA9zffl4Cjf2Gh64hU7TbAZm8foPGM"
+CHAT_ID = "-4778661545"
 BASE_URL = "https://api.bybit.com"
 
-# Фильтры стратегии (смягчённые для 1.5–4 сигнала в неделю)
-MIN_PUMP_24H = 28.0          # было 30.0
-MIN_TURNOVER_24H = 12_000_000  # было 15M → чуть ниже порог
-MIN_FUNDING = 0.065          # было 0.08 → основной рост частоты здесь
-MIN_LONGS = 68.5             # было 70.0
-MIN_SCORE_FOR_SIGNAL = 5.0   # было жёстко >=5, теперь можно 4.8–5.0
+# Фильтры стратегии (смягчённые)
+MIN_PUMP_24H = 28.0
+MIN_TURNOVER_24H = 12_000_000
+MIN_FUNDING = 0.065
+MIN_LONGS = 68.5
+MAX_SYMBOLS = 100
 
-# Риск‑менеджмент
+# Риск-менеджмент
 ACCOUNT_EQUITY = 10_000
 RISK_PER_TRADE_PCT = 1.0
 STOP_PCT = 5.0
@@ -40,9 +39,8 @@ TP2_RR = 6.0
 REPORT_INTERVAL_HOURS = 3
 MAX_NEAR_SIGNALS_IN_REPORT = 5
 
-# ================== TELEGRAM (УЛУЧШЕННАЯ ВЕРСИЯ) ==================
+# ================== TELEGRAM ==================
 def send_telegram_message(text: str) -> None:
-    """Отправка с retry и увеличенным timeout"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
     
@@ -140,7 +138,6 @@ def is_volume_climax(klines: List[List[str]]) -> bool:
     volumes = [float(k[5]) for k in klines[:35]]
     last_vol = volumes[0]
     avg_prev_vol = sum(volumes[5:]) / max(1, len(volumes[5:]))
-    # Смягчаем с ×3.0 → ×2.4
     return last_vol >= avg_prev_vol * 2.4 and avg_prev_vol > 0
 
 def is_fake_breakout(klines: List[List[str]]) -> bool:
@@ -194,7 +191,7 @@ class CVDManager:
 
     def _run(self):
         while self._running:
-            logger.info("Запуск / перезапуск CVD WebSocket...")
+            # logger.info("Запуск / перезапуск CVD WebSocket...")  # закомментировано, чтобы не спамило
             self.ws = websocket.WebSocketApp(
                 self.url,
                 on_message=self._on_message,
@@ -209,7 +206,6 @@ class CVDManager:
                 )
             except Exception as e:
                 logger.exception("Критическая ошибка в run_forever: %s", e)
-
             if self._running:
                 logger.warning("WebSocket отвалился → переподключаемся через 5 секунд...")
                 time.sleep(5)
@@ -248,10 +244,10 @@ def check_bearish_divergence(prices: List[float], cvd_value: float) -> bool:
 
 def calc_score(ticker: Dict, funding: float, longs: float, cvd_val: float, fake_breakout: bool) -> float:
     score = 0.0
-    if ticker["price24hPcnt"] > 35: score += 1      # смягчили с 40
+    if ticker["price24hPcnt"] > 35: score += 1
     if ticker["turnover24h"] > 18_000_000: score += 1
     if funding > 0.12: score += 1.2
-    if funding > 0.08: score += 0.8                # градация вместо жёсткого порога
+    if funding > 0.08: score += 0.8
     if longs > 75: score += 1
     if longs > 70: score += 0.7
     if cvd_val < 0: score += 2
@@ -270,17 +266,19 @@ last_report_time = datetime.utcnow()
 
 def reset_stats():
     global stats, near_signals, last_report_time
-    with stats_lock: stats = {"scan_count": 0, "symbols_total": 0, "after_pump": 0, "after_sentiment": 0, "after_patterns": 0, "after_cvd": 0, "signals": 0}
-    with near_signals_lock: near_signals = []
-    global last_report_time; last_report_time = datetime.utcnow()
+    with stats_lock: 
+        stats = {"scan_count": 0, "symbols_total": 0, "after_pump": 0, "after_sentiment": 0, "after_patterns": 0, "after_cvd": 0, "signals": 0}
+    with near_signals_lock: 
+        near_signals = []
+    global last_report_time
+    last_report_time = datetime.utcnow()
 
 # ================== SCAN ==================
 def scan_market():
     global stats
     symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
-MAX_SYMBOLS = 100
     if not symbols: return
-
+    
     with stats_lock:
         stats["scan_count"] += 1
         stats["symbols_total"] += len(symbols)
@@ -298,7 +296,9 @@ MAX_SYMBOLS = 100
         klines = get_recent_klines(sym)
         if not klines: continue
 
-        exhaustion, vol_climax, fake_break = is_exhaustion_pattern(klines), is_volume_climax(klines), is_fake_breakout(klines)
+        exhaustion = is_exhaustion_pattern(klines)
+        vol_climax = is_volume_climax(klines)
+        fake_break = is_fake_breakout(klines)
         if not (exhaustion and vol_climax and fake_break): continue
         with stats_lock: stats["after_patterns"] += 1
 
@@ -313,19 +313,13 @@ MAX_SYMBOLS = 100
             continue
         with stats_lock: stats["after_cvd"] += 1
 
-
         score = calc_score(ticker, funding, longs, cvd_val, fake_break)
         
-        if score < 4.8:  
+        if score < 4.8:
             with near_signals_lock:
-                near_signals.append({"symbol": sym, "ticker": ticker, "funding": funding, 
-                                     "longs": longs, "cvd": cvd_val, "reason": f"Score {score:.1f}/max", 
-                                     "score": score})
+                near_signals.append({"symbol": sym, "ticker": ticker, "funding": funding,
+                                     "longs": longs, "cvd": cvd_val, "reason": f"Score {score:.1f}", "score": score})
             continue
-
-        # 🔥 РЕАЛЬНЫЙ СИГНАЛ
-        with stats_lock: stats["signals"] += 1
-        # ... дальше отправка сообщения без изменений
 
         # 🔥 РЕАЛЬНЫЙ СИГНАЛ
         with stats_lock: stats["signals"] += 1
@@ -337,7 +331,7 @@ MAX_SYMBOLS = 100
         tp2_price = price * (1 - (STOP_PCT / 100) * TP2_RR)
 
         why_text = "• Сильный памп + ликвидность\n• Высокий funding + лонги\n• Exhaustion + volume climax\n• Fake breakout\n• CVD дивергенция"
-        msg = (f"🔥 **SHORT {sym}** (Score: {score}/8)\n\n"
+        msg = (f"🔥 **SHORT {sym}** (Score: {score:.1f})\n\n"
                f"📈 +{ticker['price24hPcnt']:.1f}% | {price:.5f}\n"
                f"💸 Funding: {funding:.3f}% | 👥 Лонги: {longs:.0f}%\n\n"
                f"🧠 *Почему:* {why_text}\n\n"
@@ -375,13 +369,16 @@ if __name__ == "__main__":
     send_telegram_message("🚀 **PRO-БОТ ЗАПУЩЕН** ✅\nстрогие фильтры + CVD + Fake Breakout")
     logger.info("Bot started")
     
-    # ✅ СТАТУС ЧЕРЕЗ 30 МИНУТ
-    schedule.every(30).minutes.do(lambda: send_telegram_message("✅ Бот жив! Сканирую Bybit..."))
+    # schedule.every(30).minutes.do(lambda: send_telegram_message("✅ Бот жив! Сканирую Bybit..."))  # закомментировано, чтобы не спамило
     
     reset_stats()
     schedule.every(10).minutes.do(scan_market)
     schedule.every(5).minutes.do(send_periodic_report)
     
     while True:
-        schedule.run_pending()
-        time.sleep(1)
+        try:
+            schedule.run_pending()
+            time.sleep(1)
+        except Exception as e:
+            logger.exception("Ошибка в главном цикле: %s", e)
+            time.sleep(10)

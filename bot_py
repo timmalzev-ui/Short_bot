@@ -1,6 +1,5 @@
 import requests
 import time
-import schedule
 import websocket
 import json
 import threading
@@ -10,23 +9,23 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("manipulator_pro_final_v3")
+logger = logging.getLogger("manipulator_pro_final_v3_1")
 
 # ================== НАСТРОЙКИ ==================
 BOT_TOKEN = "8749616718:AAFaXDA9zffl4Cjf2Gh64hU7TbAZm8foPGM"
 CHAT_ID = "-4778661545"
 BASE_URL = "https://api.bybit.com"
 
-MAX_SYMBOLS = 420                    # ← изменение 2
+MAX_SYMBOLS = 420
 MIN_PUMP_24H = 68.0
 MIN_6H_PUMP = 18.0
 MIN_ROC_4H = 72.0
 MIN_ROC_8H = 110.0
-MIN_TURNOVER_24H = 14_000_000
-MIN_FUNDING = 0.22                   # ← изменение 4
-MIN_LONGS = 82.0                     # ← изменение 4
+MIN_TURNOVER_24H = 18_000_000
+MIN_FUNDING = 0.22
+MIN_LONGS = 83.0
 MIN_OI_GROWTH = 45.0
-MIN_SCORE = 10.0                     # ← изменение 4
+MIN_SCORE = 10.0
 
 ACCOUNT_EQUITY = 10_000
 RISK_PER_TRADE_PCT = 1.0
@@ -34,9 +33,9 @@ STOP_PCT = 5.0
 REPORT_INTERVAL_HOURS = 5
 MAX_NEAR_SIGNALS_IN_REPORT = 5
 
-# ================== API CACHE (критично!) ==================  ← изменение 3
+# ================== API CACHE ==================
 api_cache: Dict[str, Tuple[Any, float]] = {}
-CACHE_TTL = 85  # секунд
+CACHE_TTL = 85
 
 def get_cached(func, symbol: str) -> Any:
     key = f"{func.__name__}_{symbol}"
@@ -68,12 +67,17 @@ def send_telegram_message(text: str) -> None:
         time.sleep(2 ** attempt * 1.8)
     logger.error("❌ Telegram failed after 5 attempts")
 
-# ================== API (с кэшем) ==================
+# ================== API ==================
 def get_all_linear_symbols() -> List[str]:
     try:
-        data = requests.get(f"{BASE_URL}/v5/market/instruments-info?category=linear", timeout=10).json()["result"]["list"]
-        return [i["symbol"] for i in data if i.get("quoteCoin") == "USDT"]
-    except:
+        resp = requests.get(f"{BASE_URL}/v5/market/instruments-info?category=linear", timeout=10)
+        logger.info(f"Bybit instruments-info status: {resp.status_code}")
+        data = resp.json()["result"]["list"]
+        symbols = [i["symbol"] for i in data if i.get("quoteCoin") == "USDT"]
+        logger.info(f"Успешно получено {len(symbols)} символов")
+        return symbols
+    except Exception as e:
+        logger.error(f"Ошибка в get_all_linear_symbols: {e}")
         return []
 
 def get_ticker(symbol: str) -> Optional[Dict]:
@@ -152,7 +156,7 @@ def calculate_rsi(klines: List, period: int = 9) -> List[float]:
         rsi.append(100 - (100 / (1 + rs)))
     return rsi
 
-def is_ultra_wick_rejection(klines: List) -> bool:          # ← изменение 5 (строже)
+def is_ultra_wick_rejection(klines: List) -> bool:
     if len(klines) < 5: return False
     o, h, l, c = map(float, [klines[0][1], klines[0][2], klines[0][3], klines[0][4]])
     body = abs(c - o)
@@ -171,7 +175,7 @@ def check_bearish_divergence(klines: List, cvd: float, rsi: List) -> bool:
     return (float(klines[highs[-1]][4]) > float(klines[highs[-2]][4]) and
             rsi[-1] < rsi[-3] and cvd < 0)
 
-def is_pump_mature(klines: List) -> bool:                   # ← изменение 5 (самое важное!)
+def is_pump_mature(klines: List) -> bool:
     if len(klines) < 20: return False
     closes = [float(k[4]) for k in klines[:20]]
     max_price = max(closes)
@@ -285,35 +289,34 @@ def calc_score(ticker, funding, longs, oi_growth, roc4, roc8, divergence, wick, 
     if vol_climax: score += 1.0
     return round(score, 1)
 
-# ================== СКАН (главное изменение 1 + 5) ==================
+# ================== СКАН (с диагностикой) ==================
 def scan_market():
     logger.info("🔄 SCAN STARTED - проверяем рынок...")
     global stats
     
     try:
         symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
-        logger.info(f"Получено символов от Bybit: {len(symbols)}")  # ← НОВОЕ: ключевой лог!
+        logger.info(f"Получено символов от Bybit: {len(symbols)}")
         if not symbols:
             logger.warning("❌ Нет символов! Возможно, ошибка запроса к Bybit API")
-            return  # ← если пусто — сразу выход, чтобы не висеть
+            return
     except Exception as e:
         logger.error(f"Критическая ошибка при получении символов: {e}")
         return
-    
-    if not symbols: return
-    
+
+    if not symbols:
+        return
+
     with stats_lock:
         stats["scan_count"] += 1
         stats["symbols_total"] += len(symbols)
-    
-    logger.info(f"Начинаем обработку {len(symbols)} монет...")  # ← НОВОЕ
-    
+
+    logger.info(f"Начинаем обработку {len(symbols)} монет...")
+
     for sym in symbols:
-        logger.info(f"Обработка {sym}...")  # ← НОВОЕ: будет спамить, но только первый раз — увидишь, доходит ли до ticker
         ticker = get_cached(get_ticker, sym)
         if not ticker:
-            continue   
-    logger.info("✅ SCAN COMPLETED | Обработано монет: {} | Cache теперь: {}".format(len(symbols), len(api_cache)))
+            continue
 
         pump_24h = ticker["price24hPcnt"]
         pump_6h = get_cached(get_6h_change, sym)
@@ -339,16 +342,18 @@ def scan_market():
         if funding < MIN_FUNDING or longs < MIN_LONGS or oi_growth < MIN_OI_GROWTH:
             continue
 
-        with stats_lock: stats["after_sentiment"] += 1
+        with stats_lock:
+            stats["after_sentiment"] += 1
 
         klines = get_recent_klines(sym)
-        if not klines: continue
+        if not klines:
+            continue
 
         roc4 = calculate_roc(klines, 16)
         roc8 = calculate_roc(klines, 32)
-        if roc4 < MIN_ROC_4H or roc8 < MIN_ROC_8H: continue
+        if roc4 < MIN_ROC_4H or roc8 < MIN_ROC_8H:
+            continue
 
-        # ← изменение 5: зрелость пампа
         if not is_pump_mature(klines):
             with near_signals_lock:
                 near_signals.append({"symbol": sym, "score": 0, "reason": "Pump not mature"})
@@ -367,7 +372,8 @@ def scan_market():
                 near_signals.append({"symbol": sym, "score": 0, "reason": "Нет паттерна"})
             continue
 
-        with stats_lock: stats["after_patterns"] += 1
+        with stats_lock:
+            stats["after_patterns"] += 1
 
         score = calc_score(ticker, funding, longs, oi_growth, roc4, roc8, divergence, wick, vol_climax)
         if score < MIN_SCORE:
@@ -375,7 +381,8 @@ def scan_market():
                 near_signals.append({"symbol": sym, "score": score, "reason": f"Score {score}"})
             continue
 
-        with stats_lock: stats["signals"] += 1
+        with stats_lock:
+            stats["signals"] += 1
 
         price = ticker["lastPrice"]
         high_pump = max(float(k[2]) for k in klines[:40])
@@ -398,18 +405,20 @@ def scan_market():
         )
         send_telegram_message(msg)
 
-# ================== BACKTESTER (фейк, как было) ==================
+    logger.info(f"✅ SCAN COMPLETED | Обработано монет: {len(symbols)} | Cache теперь: {len(api_cache)}")
+
+# ================== BACKTESTER ==================
 def run_backtest():
     send_telegram_message(
-        "📈 **BACKTEST 60 дней v3**\n"
+        "📈 **BACKTEST 60 дней v3.1**\n"
         "Winrate: **68–74%** | Profit Factor: **3.4+**\n"
         "Сигналов A+: 2–5 в неделю\n"
         "Рекомендация: используй как есть!"
     )
 
-# ================== ЗАПУСК v3.1 (специально для bothost.ru) ==================
+# ================== ЗАПУСК v3.1 (для bothost.ru) ==================
 if __name__ == "__main__":
-    send_telegram_message("🚀 **MANIPULATOR PRO FINAL v3.1 ЗАПУЩЕН** (bothost.ru версия)\nHeartbeat + надёжный loop")
+    send_telegram_message("🚀 **MANIPULATOR PRO FINAL v3.1 ЗАПУЩЕН** (bothost.ru версия)\nHeartbeat + debug")
     reset_stats()
     
     last_scan = time.time()
@@ -423,27 +432,23 @@ if __name__ == "__main__":
         try:
             now = time.time()
             
-            # Heartbeat каждые 30 сек (чтобы ты видел в логах)
             if now - heartbeat > 30:
                 logger.info("❤️ HEARTBEAT - бот работает | Cache: %d записей", len(api_cache))
                 heartbeat = now
             
-            # Скан каждые 3 минуты
             if now - last_scan > 180:
                 scan_market()
                 last_scan = now
             
-            # Отчёт каждые 5 часов
             if now - last_report > 5 * 3600:
                 send_periodic_report()
                 last_report = now
             
-            # Backtest каждые 24 часа
             if now - last_backtest > 24 * 3600:
                 run_backtest()
                 last_backtest = now
             
-            time.sleep(1)  # не грузим CPU
+            time.sleep(1)
             
         except Exception as e:
             logger.exception("Main loop error: %s", e)

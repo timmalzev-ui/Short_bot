@@ -26,6 +26,8 @@ MIN_FUNDING = 0.22
 MIN_LONGS = 83.0
 MIN_OI_GROWTH = 45.0
 MIN_SCORE = 10.0
+MAX_TURNOVER_FILTER = 100_000_000   # отсекаем слишком ликвидный крупняк
+MAX_PRICE_FILTER = 4.0              # отсекаем дорогие монеты
 
 ACCOUNT_EQUITY = 10_000
 RISK_PER_TRADE_PCT = 1.0
@@ -313,7 +315,7 @@ def scan_market():
 
     logger.info(f"Начинаем обработку {len(symbols)} монет...")
 
-    processed = 0
+       processed = 0
     for sym in symbols:
         try:
             ticker = get_cached(get_ticker, sym)
@@ -321,6 +323,13 @@ def scan_market():
                 processed += 1
                 if processed % 20 == 0:
                     logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            # === ФИЛЬТР КРУПНЫХ МОНЕТ (BTC/ETH/SOL и т.д.) ===
+            if ticker["turnover24h"] > MAX_TURNOVER_FILTER or ticker["lastPrice"] > MAX_PRICE_FILTER:
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет (отфильтрован крупняк)")
                 continue
 
             pump_24h = ticker["price24hPcnt"]

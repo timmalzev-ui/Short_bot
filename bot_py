@@ -287,6 +287,7 @@ def calc_score(ticker, funding, longs, oi_growth, roc4, roc8, divergence, wick, 
 
 # ================== СКАН (главное изменение 1 + 5) ==================
 def scan_market():
+    logger.info("🔄 SCAN STARTED - проверяем рынок...")
     global stats
     symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
     print(f"✅ SCAN OK | Монет обработано: {len(symbols)} | Cache size: {len(api_cache)}")
@@ -393,17 +394,44 @@ def run_backtest():
         "Рекомендация: используй как есть!"
     )
 
-# ================== ЗАПУСК ==================
+# ================== ЗАПУСК v3.1 (специально для bothost.ru) ==================
 if __name__ == "__main__":
-    send_telegram_message("🚀 **MANIPULATOR PRO v3 ЗАПУЩЕН** | Полная автоматизация + cache")
+    send_telegram_message("🚀 **MANIPULATOR PRO FINAL v3.1 ЗАПУЩЕН** (bothost.ru версия)\nHeartbeat + надёжный loop")
     reset_stats()
-    schedule.every(3).minutes.do(scan_market)
-    schedule.every(5).hours.do(send_periodic_report)
-    schedule.every(24).hours.do(run_backtest)
+    
+    last_scan = time.time()
+    last_report = time.time()
+    last_backtest = time.time()
+    heartbeat = time.time()
+    
+    logger.info("✅ Main loop started - бот полностью живой")
+    
     while True:
         try:
-            schedule.run_pending()
-            time.sleep(1)
+            now = time.time()
+            
+            # Heartbeat каждые 30 сек (чтобы ты видел в логах)
+            if now - heartbeat > 30:
+                logger.info("❤️ HEARTBEAT - бот работает | Cache: %d записей", len(api_cache))
+                heartbeat = now
+            
+            # Скан каждые 3 минуты
+            if now - last_scan > 180:
+                scan_market()
+                last_scan = now
+            
+            # Отчёт каждые 5 часов
+            if now - last_report > 5 * 3600:
+                send_periodic_report()
+                last_report = now
+            
+            # Backtest каждые 24 часа
+            if now - last_backtest > 24 * 3600:
+                run_backtest()
+                last_backtest = now
+            
+            time.sleep(1)  # не грузим CPU
+            
         except Exception as e:
             logger.exception("Main loop error: %s", e)
             time.sleep(10)

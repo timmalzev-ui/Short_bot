@@ -22,9 +22,9 @@ MIN_PUMP_24H = 68.0
 MIN_6H_PUMP = 18.0
 MIN_ROC_4H = 72.0
 MIN_ROC_8H = 110.0
-MIN_TURNOVER_24H = 18_000_000
+MIN_TURNOVER_24H = 14_000_000
 MIN_FUNDING = 0.22                   # ← изменение 4
-MIN_LONGS = 83.0                     # ← изменение 4
+MIN_LONGS = 82.0                     # ← изменение 4
 MIN_OI_GROWTH = 45.0
 MIN_SCORE = 10.0                     # ← изменение 4
 
@@ -289,6 +289,7 @@ def calc_score(ticker, funding, longs, oi_growth, roc4, roc8, divergence, wick, 
 def scan_market():
     global stats
     symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
+    print(f"✅ SCAN OK | Монет обработано: {len(symbols)} | Cache size: {len(api_cache)}")
     if not symbols: return
 
     with stats_lock:

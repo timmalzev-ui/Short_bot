@@ -289,18 +289,31 @@ def calc_score(ticker, funding, longs, oi_growth, roc4, roc8, divergence, wick, 
 def scan_market():
     logger.info("🔄 SCAN STARTED - проверяем рынок...")
     global stats
-    symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
-    print(f"✅ SCAN OK | Монет обработано: {len(symbols)} | Cache size: {len(api_cache)}")
+    
+    try:
+        symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
+        logger.info(f"Получено символов от Bybit: {len(symbols)}")  # ← НОВОЕ: ключевой лог!
+        if not symbols:
+            logger.warning("❌ Нет символов! Возможно, ошибка запроса к Bybit API")
+            return  # ← если пусто — сразу выход, чтобы не висеть
+    except Exception as e:
+        logger.error(f"Критическая ошибка при получении символов: {e}")
+        return
+    
     if not symbols: return
-
+    
     with stats_lock:
         stats["scan_count"] += 1
         stats["symbols_total"] += len(symbols)
-
+    
+    logger.info(f"Начинаем обработку {len(symbols)} монет...")  # ← НОВОЕ
+    
     for sym in symbols:
+        logger.info(f"Обработка {sym}...")  # ← НОВОЕ: будет спамить, но только первый раз — увидишь, доходит ли до ticker
         ticker = get_cached(get_ticker, sym)
         if not ticker:
-            continue
+            continue   
+    logger.info("✅ SCAN COMPLETED | Обработано монет: {} | Cache теперь: {}".format(len(symbols), len(api_cache)))
 
         pump_24h = ticker["price24hPcnt"]
         pump_6h = get_cached(get_6h_change, sym)

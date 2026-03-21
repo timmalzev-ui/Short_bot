@@ -264,18 +264,41 @@ def calc_score(ticker, funding, longs, oi_growth, roc4, roc8, divergence, wick, 
     return round(score, 1)
 
 # ================== СКАН ==================
+
 def scan_market():
     global stats
-    symbols = get_all_linear_symbols()[:120]
+    symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
+    if not symbols: return
+
     with stats_lock:
         stats["scan_count"] += 1
         stats["symbols_total"] += len(symbols)
 
     for sym in symbols:
         ticker = get_ticker(sym)
+        if not ticker:
+            continue
+
+        pump_24h = ticker["price24hPcnt"]
+        pump_6h = get_6h_change(sym)
+
+        # === НОВАЯ ЛОГИКА ДВУХ ПУТЕЙ ===
+        is_classic_pump = pump_24h >= MIN_PUMP_24H
+        is_short_spike = pump_6h >= MIN_6H_PUMP
+
+        if not (is_classic_pump or is_short_spike):
+            continue
+
+        # Добавляем метку для отчёта (чтобы ты видел, какой путь сработал)
+        spike_type = "24h" if is_classic_pump else "6h SPIKE"
+        # ← ВСТАВЬ ЭТОТ БЛОК ВМЕСТО СТАРОГО НАЧАЛА (до with stats_lock: stats["after_pump"] +=1 )
+
+    for sym in symbols:
+        ticker = get_ticker(sym)
         if not ticker or ticker["price24hPcnt"] < MIN_PUMP_24H or ticker["turnover24h"] < MIN_TURNOVER_24H:
             continue
-        with stats_lock: stats["after_pump"] += 1
+        with stats_lock: 
+            stats["after_pump"] += 1
 
         funding = get_funding_rate(sym)
         longs = get_long_short_ratio(sym)

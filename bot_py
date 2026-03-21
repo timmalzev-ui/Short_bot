@@ -295,10 +295,10 @@ def scan_market():
     global stats
     
     try:
-        symbols = get_all_linear_symbols()[:MAX_SYMBOLS]
+        symbols = get_all_linear_symbols()[:200]  # ← ВРЕМЕННО 200 (быстрее)
         logger.info(f"Получено символов от Bybit: {len(symbols)}")
         if not symbols:
-            logger.warning("❌ Нет символов! Возможно, ошибка запроса к Bybit API")
+            logger.warning("❌ Нет символов!")
             return
     except Exception as e:
         logger.error(f"Критическая ошибка при получении символов: {e}")
@@ -313,97 +313,123 @@ def scan_market():
 
     logger.info(f"Начинаем обработку {len(symbols)} монет...")
 
+    processed = 0
     for sym in symbols:
-        ticker = get_cached(get_ticker, sym)
-        if not ticker:
+        try:
+            ticker = get_cached(get_ticker, sym)
+            if not ticker:
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            pump_24h = ticker["price24hPcnt"]
+            pump_6h = get_cached(get_6h_change, sym)
+
+            is_classic_pump = pump_24h >= MIN_PUMP_24H
+            is_short_spike = pump_6h >= MIN_6H_PUMP
+
+            if not (is_classic_pump or is_short_spike):
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            if ticker["turnover24h"] < MIN_TURNOVER_24H:
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            # ... (весь остальной код от spike_type до send_telegram_message(msg) — ОСТАВЛЯЕМ БЕЗ ИЗМЕНЕНИЙ)
+
+            spike_type = "24h CLASSIC" if is_classic_pump else "6h SPIKE"
+
+            with stats_lock:
+                stats["after_pump"] += 1
+
+            funding = get_cached(get_funding_rate, sym)
+            longs = get_cached(get_long_short_ratio, sym)
+            oi_growth = get_cached(get_open_interest_growth, sym)
+
+            if funding < MIN_FUNDING or longs < MIN_LONGS or oi_growth < MIN_OI_GROWTH:
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            with stats_lock:
+                stats["after_sentiment"] += 1
+
+            klines = get_recent_klines(sym)
+            if not klines:
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            roc4 = calculate_roc(klines, 16)
+            roc8 = calculate_roc(klines, 32)
+            if roc4 < MIN_ROC_4H or roc8 < MIN_ROC_8H:
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            if not is_pump_mature(klines):
+                with near_signals_lock:
+                    near_signals.append({"symbol": sym, "score": 0, "reason": "Pump not mature"})
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            rsi_list = calculate_rsi(klines, 9)
+            cvd_val, _ = cvd_manager.get_snapshot(sym)
+            cvd_manager.subscribe_symbol(sym)
+
+            wick = is_ultra_wick_rejection(klines)
+            vol_climax = is_volume_climax(klines)
+            divergence = check_bearish_divergence(klines, cvd_val, rsi_list)
+
+            if not (wick and vol_climax and divergence):
+                with near_signals_lock:
+                    near_signals.append({"symbol": sym, "score": 0, "reason": "Нет паттерна"})
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            with stats_lock:
+                stats["after_patterns"] += 1
+
+            score = calc_score(ticker, funding, longs, oi_growth, roc4, roc8, divergence, wick, vol_climax)
+            if score < MIN_SCORE:
+                with near_signals_lock:
+                    near_signals.append({"symbol": sym, "score": score, "reason": f"Score {score}"})
+                processed += 1
+                if processed % 20 == 0:
+                    logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
+                continue
+
+            with stats_lock:
+                stats["signals"] += 1
+
+            price = ticker["lastPrice"]
+            high_pump = max(float(k[2]) for k in klines[:40])
+            trail_target = price * 0.6 + high_pump * 0.4
+
+            msg = ( ... )  # ← здесь оставь ТОТ ЖЕ msg, что был раньше
+            send_telegram_message(msg)
+
+        except Exception as e:
+            logger.warning(f"Ошибка при обработке {sym}: {e}")
+            processed += 1
             continue
 
-        pump_24h = ticker["price24hPcnt"]
-        pump_6h = get_cached(get_6h_change, sym)
-
-        is_classic_pump = pump_24h >= MIN_PUMP_24H
-        is_short_spike = pump_6h >= MIN_6H_PUMP
-
-        if not (is_classic_pump or is_short_spike):
-            continue
-
-        if ticker["turnover24h"] < MIN_TURNOVER_24H:
-            continue
-
-        spike_type = "24h CLASSIC" if is_classic_pump else "6h SPIKE"
-
-        with stats_lock:
-            stats["after_pump"] += 1
-
-        funding = get_cached(get_funding_rate, sym)
-        longs = get_cached(get_long_short_ratio, sym)
-        oi_growth = get_cached(get_open_interest_growth, sym)
-
-        if funding < MIN_FUNDING or longs < MIN_LONGS or oi_growth < MIN_OI_GROWTH:
-            continue
-
-        with stats_lock:
-            stats["after_sentiment"] += 1
-
-        klines = get_recent_klines(sym)
-        if not klines:
-            continue
-
-        roc4 = calculate_roc(klines, 16)
-        roc8 = calculate_roc(klines, 32)
-        if roc4 < MIN_ROC_4H or roc8 < MIN_ROC_8H:
-            continue
-
-        if not is_pump_mature(klines):
-            with near_signals_lock:
-                near_signals.append({"symbol": sym, "score": 0, "reason": "Pump not mature"})
-            continue
-
-        rsi_list = calculate_rsi(klines, 9)
-        cvd_val, _ = cvd_manager.get_snapshot(sym)
-        cvd_manager.subscribe_symbol(sym)
-
-        wick = is_ultra_wick_rejection(klines)
-        vol_climax = is_volume_climax(klines)
-        divergence = check_bearish_divergence(klines, cvd_val, rsi_list)
-
-        if not (wick and vol_climax and divergence):
-            with near_signals_lock:
-                near_signals.append({"symbol": sym, "score": 0, "reason": "Нет паттерна"})
-            continue
-
-        with stats_lock:
-            stats["after_patterns"] += 1
-
-        score = calc_score(ticker, funding, longs, oi_growth, roc4, roc8, divergence, wick, vol_climax)
-        if score < MIN_SCORE:
-            with near_signals_lock:
-                near_signals.append({"symbol": sym, "score": score, "reason": f"Score {score}"})
-            continue
-
-        with stats_lock:
-            stats["signals"] += 1
-
-        price = ticker["lastPrice"]
-        high_pump = max(float(k[2]) for k in klines[:40])
-        trail_target = price * 0.6 + high_pump * 0.4
-
-        msg = (
-            f"🔥 **A+ SHORT {sym}** ({spike_type} | Score: {score}/10)\n\n"
-            f"📈 +{ticker['price24hPcnt']:.1f}% | {price:.5f}\n"
-            f"💸 Funding: {funding:.3f}% | Лонги: {longs:.0f}% | OI +{oi_growth:.1f}%\n"
-            f"📊 ROC4h: {roc4:.1f}% | ROC8h: {roc8:.1f}%\n\n"
-            f"🧠 **Почему A+**:\n"
-            f"• Вертикальный памп + OI explosion\n"
-            f"• Ultra wick 5.2× + volume climax\n"
-            f"• RSI9 + CVD divergence + зрелый памп\n\n"
-            f"🎯 **Вход**: Лимит -1.2% ниже цены ИЛИ market после breakdown low wick\n"
-            f"🛑 Стоп: +{STOP_PCT}%\n"
-            f"🎯 40% на 1:3 | 30% на 1:6 | 30% trailing до {trail_target:.5f}\n"
-            f"💼 Риск: {ACCOUNT_EQUITY * RISK_PER_TRADE_PCT / 100:.0f}$\n"
-            f"https://www.bybit.com/trade/usdt/{sym}"
-        )
-        send_telegram_message(msg)
+        processed += 1
+        if processed % 20 == 0:
+            logger.info(f"Прогресс: {processed}/{len(symbols)} монет")
 
     logger.info(f"✅ SCAN COMPLETED | Обработано монет: {len(symbols)} | Cache теперь: {len(api_cache)}")
 

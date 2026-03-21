@@ -75,8 +75,11 @@ def get_all_linear_symbols() -> List[str]:
         resp = requests.get(f"{BASE_URL}/v5/market/instruments-info?category=linear", timeout=10)
         logger.info(f"Bybit instruments-info status: {resp.status_code}")
         data = resp.json()["result"]["list"]
-        symbols = [i["symbol"] for i in data if i.get("quoteCoin") == "USDT"]
-        logger.info(f"Успешно получено {len(symbols)} символов")
+        # ←←← ФИЛЬТР ТОЛЬКО PERPETUAL (убираем все -24APR26 и т.д.)
+        symbols = [i["symbol"] for i in data 
+                   if i.get("quoteCoin") == "USDT" 
+                   and "-" not in i["symbol"]]   # ←←← ЭТО ГЛАВНАЯ СТРОКА
+        logger.info(f"Успешно получено {len(symbols)} perpetual символов (futures исключены)")
         return symbols
     except Exception as e:
         logger.error(f"Ошибка в get_all_linear_symbols: {e}")

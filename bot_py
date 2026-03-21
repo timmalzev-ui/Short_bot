@@ -18,6 +18,7 @@ CHAT_ID = "-4778661545"
 BASE_URL = "https://api.bybit.com"
 
 MIN_PUMP_24H = 68.0
+MIN_6H_PUMP = 18.0
 MIN_ROC_4H = 72.0
 MIN_ROC_8H = 110.0
 MIN_TURNOVER_24H = 18_000_000
@@ -97,6 +98,22 @@ def get_recent_klines(symbol: str, interval: str = "15", limit: int = 120) -> Li
         return requests.get(f"{BASE_URL}/v5/market/kline?category=linear&symbol={symbol}&interval={interval}&limit={limit}", timeout=10).json()["result"]["list"]
     except:
         return []
+
+def get_6h_change(symbol: str) -> float:
+    """Возвращает процент изменения за последние 6 часов"""
+    url = f"{BASE_URL}/v5/market/kline?category=linear&symbol={symbol}&interval=60&limit=7"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        klines = resp.json()["result"]["list"]
+        if len(klines) < 2:
+            return 0.0
+        price_old = float(klines[-1][4])   # 6 часов назад
+        price_now = float(klines[0][4])
+        return (price_now - price_old) / price_old * 100
+    except Exception as e:
+        logger.exception("Error in get_6h_change(%s): %s", symbol, e)
+        return 0.0
 
 # ================== ИНДИКАТОРЫ ==================
 def calculate_roc(klines: List, periods: int) -> float:

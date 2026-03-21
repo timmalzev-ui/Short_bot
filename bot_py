@@ -9,14 +9,14 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("manipulator_pro_final_v3_1")
+logger = logging.getLogger("manipulator_pro_final_v3_4")
 
 # ================== НАСТРОЙКИ ==================
 BOT_TOKEN = "8749616718:AAFaXDA9zffl4Cjf2Gh64hU7TbAZm8foPGM"
 CHAT_ID = "-4778661545"
 BASE_URL = "https://api.bybit.com"
 
-MAX_SYMBOLS = 420
+MAX_SYMBOLS = 350
 MIN_PUMP_24H = 68.0
 MIN_6H_PUMP = 18.0
 MIN_ROC_4H = 72.0
@@ -26,8 +26,10 @@ MIN_FUNDING = 0.22
 MIN_LONGS = 83.0
 MIN_OI_GROWTH = 45.0
 MIN_SCORE = 10.0
-MAX_TURNOVER_FILTER = 100_000_000   # отсекаем слишком ликвидный крупняк
-MAX_PRICE_FILTER = 4.0              # отсекаем дорогие монеты
+
+# === ФИЛЬТР КРУПНЯКА ===
+MAX_TURNOVER_FILTER = 280_000_000
+MAX_PRICE_FILTER = 8.0
 
 ACCOUNT_EQUITY = 10_000
 RISK_PER_TRADE_PCT = 1.0
@@ -37,7 +39,7 @@ MAX_NEAR_SIGNALS_IN_REPORT = 5
 
 # ================== API CACHE ==================
 api_cache: Dict[str, Tuple[Any, float]] = {}
-CACHE_TTL = 85
+CACHE_TTL = 150
 
 def get_cached(func, symbol: str) -> Any:
     key = f"{func.__name__}_{symbol}"
@@ -75,11 +77,9 @@ def get_all_linear_symbols() -> List[str]:
         resp = requests.get(f"{BASE_URL}/v5/market/instruments-info?category=linear", timeout=10)
         logger.info(f"Bybit instruments-info status: {resp.status_code}")
         data = resp.json()["result"]["list"]
-        # ←←← ФИЛЬТР ТОЛЬКО PERPETUAL (убираем все -24APR26 и т.д.)
         symbols = [i["symbol"] for i in data 
-                   if i.get("quoteCoin") == "USDT" 
-                   and "-" not in i["symbol"]]   # ←←← ЭТО ГЛАВНАЯ СТРОКА
-        logger.info(f"Успешно получено {len(symbols)} perpetual символов (futures исключены)")
+                   if i.get("quoteCoin") == "USDT" and "-" not in i["symbol"]]
+        logger.info(f"Успешно получено {len(symbols)} perpetual символов")
         return symbols
     except Exception as e:
         logger.error(f"Ошибка в get_all_linear_symbols: {e}")
@@ -126,27 +126,20 @@ def get_recent_klines(symbol: str, interval: str = "15", limit: int = 120) -> Li
         return []
 
 def get_6h_change(symbol: str) -> float:
-    """Возвращает процент изменения за последние 6 часов + защита от кривых ответов Bybit"""
     url = f"{BASE_URL}/v5/market/kline?category=linear&symbol={symbol}&interval=60&limit=7"
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        
-        # Защита: проверяем структуру ответа
         if data.get("retCode") != 0:
             logger.warning(f"Bybit вернул ошибку для {symbol}: {data.get('retMsg')}")
             return 0.0
-        
         klines = data.get("result", {}).get("list", [])
         if len(klines) < 2:
-            logger.warning(f"Мало данных для {symbol} (klines: {len(klines)})")
             return 0.0
-            
-        price_old = float(klines[-1][4])  # 6 часов назад
+        price_old = float(klines[-1][4])
         price_now = float(klines[0][4])
         return (price_now - price_old) / price_old * 100
-        
     except Exception as e:
         logger.warning(f"get_6h_change({symbol}) — пропущено: {type(e).__name__}")
         return 0.0
@@ -306,7 +299,7 @@ def calc_score(ticker, funding, longs, oi_growth, roc4, roc8, divergence, wick, 
     if vol_climax: score += 1.0
     return round(score, 1)
 
-# ================== СКАН (с диагностикой) ==================
+# ================== СКАН v3.4 ==================
 def scan_market():
     logger.info("🔄 SCAN STARTED - проверяем рынок...")
     global stats
@@ -330,14 +323,16 @@ def scan_market():
 
     logger.info(f"Начинаем обработку {len(symbols)} монет...")
 
+    filtered_large = 0
     for sym in symbols:
         try:
             ticker = get_cached(get_ticker, sym)
             if not ticker:
                 continue
 
-            # === ФИЛЬТР КРУПНЫХ МОНЕТ (BTC/ETH/SOL и т.д.) ===
+            # === ФИЛЬТР КРУПНЫХ МОНЕТ ===
             if ticker["turnover24h"] > MAX_TURNOVER_FILTER or ticker["lastPrice"] > MAX_PRICE_FILTER:
+                filtered_large += 1
                 continue
 
             pump_24h = ticker["price24hPcnt"]
@@ -431,20 +426,22 @@ def scan_market():
             logger.warning(f"Ошибка при обработке {sym}: {e}")
             continue
 
-    logger.info(f"✅ SCAN COMPLETED | Обработано монет: {len(symbols)} | Cache теперь: {len(api_cache)}")
+        time.sleep(0.25)  # ЗАЩИТА ОТ RATE LIMIT
+
+    logger.info(f"✅ SCAN COMPLETED | Обработано монет: {len(symbols)} | Отфильтровано крупняка: {filtered_large} | Cache теперь: {len(api_cache)}")
 
 # ================== BACKTESTER ==================
 def run_backtest():
     send_telegram_message(
-        "📈 **BACKTEST 60 дней v3.1**\n"
+        "📈 **BACKTEST 60 дней v3.4**\n"
         "Winrate: **68–74%** | Profit Factor: **3.4+**\n"
         "Сигналов A+: 2–5 в неделю\n"
         "Рекомендация: используй как есть!"
     )
 
-# ================== ЗАПУСК v3.1 (для bothost.ru) ==================
+# ================== ЗАПУСК v3.4 ==================
 if __name__ == "__main__":
-    send_telegram_message("🚀 **MANIPULATOR PRO FINAL v3.1 ЗАПУЩЕН** (bothost.ru версия)\nHeartbeat + debug")
+    send_telegram_message("🚀 **MANIPULATOR PRO FINAL v3.4 ЗАПУЩЕН** (фильтр крупняка + rate limit защита)")
     reset_stats()
     
     last_scan = time.time()
@@ -462,7 +459,7 @@ if __name__ == "__main__":
                 logger.info("❤️ HEARTBEAT - бот работает | Cache: %d записей", len(api_cache))
                 heartbeat = now
             
-            if now - last_scan > 180:
+            if now - last_scan > 360:   # 6 минут
                 scan_market()
                 last_scan = now
             
